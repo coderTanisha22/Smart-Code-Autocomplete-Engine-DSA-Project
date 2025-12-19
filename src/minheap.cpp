@@ -54,7 +54,7 @@ pair<double,string> MinHeap::getMin(){
 }
 struct Comparator{
     bool operator()(const pair<double,string>& a,const pair<double,string>& b) const{
-      return a.first>b.first;
+    return a.first>b.first;
     }
 };
 vector<pair<double,string>> MinHeap::getAll(){

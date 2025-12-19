@@ -1,6 +1,6 @@
 # Smart Code Autocomplete Engine (C++)
 
-The Smart Code Autocomplete Engine is a C++ project designed to suggest intelligent code completions in real time — similar to how modern IDEs like VS Code or IntelliJ offer autocomplete suggestions.
+The Smart Code Autocomplete Engine is a C++ project designed to suggest intelligent code completions in interactively — similar to how modern IDEs like VS Code or IntelliJ offer autocomplete suggestions.
 It applies core Data Structures and Algorithms (DSA) concepts such as Tries, Heaps, and LRU (Least Recently Used) caching to efficiently predict the next most probable code tokens based on user input frequency and context.
 
 ## Idea
@@ -27,7 +27,7 @@ This results in fast, memory-efficient, and intelligent autocomplete suggestions
 
 - Files: minheap.h, minheap.cpp, heap_test.cpp
 - Maintains the top N most frequent or relevant words efficiently.
-- Provides constant-time access to the best-ranked suggestion.
+- Provides O(1) access to the top-ranked suggestion with O(log k) updates.
 - Used during ranking and sorting of autocomplete results.
 
 🔹 Concepts used: Binary heap operations, priority queue logic, partial sorting.
@@ -51,17 +51,18 @@ This results in fast, memory-efficient, and intelligent autocomplete suggestions
 
 - Files: graph.h, graph.cpp
 - Represents relationships between tokens or code components.
-- Can model transitions between function calls or variable dependencies for context-aware suggestions.
+- Models token co-occurrence relationships to enable context-aware autocomplete suggestions.
 
 🔹 Concepts used: Adjacency list representation, graph traversal (BFS/DFS).
 
 ### 6. Stack
 
 - Files: stack.h, stack.cpp
-- Used internally for recursive operations, backtracking, or maintaining function call hierarchies.
-- Simplifies control flow during traversal or undo operations in text editing logic.
+- Used to implement undo and redo functionality in the editor.
+- Stores previously accepted tokens or editing states for controlled rollback.
 
-🔹 Concepts used: LIFO operations, template-based generic stack implementation.
+🔹 Concepts used: LIFO operations, state management, undo/redo logic.
+
 
 ### 7. Ranking System
 - Files: ranker.h, ranker.cpp
@@ -107,8 +108,8 @@ This results in fast, memory-efficient, and intelligent autocomplete suggestions
 ## How It Works
 1. User enters keywords (e.g., `print`, `printf`, `private`, etc.)
 2. Trie stores all words for fast prefix lookup
-3. Hash map tracks how often each word is used
-4. Heap finds the most frequent matches for a prefix
+3. Hash map tracks how often each token is selected
+4. Heap ranks the top-K most relevant matches for the prefix
 5. Snippets expand small abbreviations into full code blocks
 
 ## Example Usage
@@ -126,10 +127,9 @@ This results in fast, memory-efficient, and intelligent autocomplete suggestions
 
 ### 2. (Optional) Create and activate virtual environment
 
-If your project uses Python utilities or scripts (e.g., preprocessing):
 
-- python3 -m venv dsavenv
-- source dsavenv/bin/activate
+- python3 -m venv venvname
+- source venvname/bin/activate
 
 ---
 
@@ -139,17 +139,16 @@ If your project uses Python utilities or scripts (e.g., preprocessing):
 
 ---
 ### 4. Build the project
-### 4. Build the project
+
 
 Use the root `Makefile`. 
 Build the terminal editor:
 
 ```bash
-make basic_editor
-
-# produces `./basic_editor`
+make
+# produces ./basic_editor
 ```
-If you prefer to compile the editor manually:
+If you prefer to compile the editor manually, in the terminal:
 
 ```bash
 g++ -std=c++17 basic_editor.cpp \
@@ -163,12 +162,17 @@ g++ -std=c++17 basic_editor.cpp \
 
 - Run the editor:
 
-	./basic_editor
+```bash
+./basic_editor
+```
 
 
 Notes:
 - `scratch/` is created automatically by `basic_editor` and is ignored by git; editor-saved local files will go there by default.
 - If you downloaded pre-built binaries and see errors about GLIBCXX or GLIBC versions, rebuild locally (e.g., `make clean && make`) to link against your machine's C++ runtime.
+- A separate CLI-based autocomplete tester exists for development and debugging.
+It is not required to run the ncurses-based editor and is excluded from the default build.
+
 
 ---
 ## Running Tests
@@ -200,8 +204,8 @@ To verify components:
 
 
 ---
-## Educational Purpose
-This project demonstrates the application of DSA in a real-world scenario — showing how core structures like tries, heaps, and caches can combine to form an intelligent system used in everyday developer tools.
+## Purpose
+This project demonstrates the application of DSA in a real-world scenario - showing how core structures like tries, heaps, and caches can combine to form an intelligent system used in everyday developer tools.
 #test
 
 

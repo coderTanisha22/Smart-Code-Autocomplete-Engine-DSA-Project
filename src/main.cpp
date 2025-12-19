@@ -1,3 +1,23 @@
+/*
+ * Command-line interface for testing the Smart Autocomplete Engine.
+ *
+ * This file provides a simple REPL-based interface to interact with the
+ * autocomplete system without any UI dependencies. It was used to develop,
+ * debug, and validate the core autocomplete logic before integrating it into
+ * the ncurses-based editor.
+ *
+ * The CLI allows:
+ * - prefix-based token suggestions
+ * - frequency- and context-aware ranking
+ * - phrase learning and persistence
+ * - undo/redo of accepted tokens
+ * - optional substring matching using KMP
+ * - inspection of the co-occurrence graph
+ *
+ * This file is not required for running the terminal editor, but is retained
+ * as a lightweight testing and demonstration tool for the autocomplete engine.
+ */
+
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -337,7 +357,7 @@ int main() {
 
                     // Prompt for phrase learning
                     std::cout << "\nType complete code for '" << acceptedToken
-                              << "' (or press Enter to skip learning): ";
+                            << "' (or press Enter to skip learning): ";
                     std::string fullCode;
                     std::getline(std::cin, fullCode);
 
@@ -360,7 +380,7 @@ int main() {
 
                     // Prompt for phrase learning
                     std::cout << "\nType complete code for '" << acceptedToken
-                              << "' (or press Enter to skip learning): ";
+                            << "' (or press Enter to skip learning): ";
                     std::string fullCode;
                     std::getline(std::cin, fullCode);
 
