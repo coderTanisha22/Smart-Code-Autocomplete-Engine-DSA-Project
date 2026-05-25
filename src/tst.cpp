@@ -14,7 +14,7 @@ std::shared_ptr<TSTNode> TST::insertUtil(std::shared_ptr<TSTNode> node,
         } else if (word[index] > node->data) {
         node->right = insertUtil(node->right, word, index);
     } else {
-        if (index < word.length() - 1) {
+        if (index < (int)word.length() - 1) {
             node->eq = insertUtil(node->eq, word, index + 1);
         } else {
             node->isEndOfString = true;
@@ -35,68 +35,73 @@ std::shared_ptr<TSTNode> TST::searchPrefix(const std::string& prefix) {
     auto node = root;
     int i = 0;
     
-    while (node != nullptr && i < prefix.length()) {
+    while (node != nullptr && i < (int)prefix.length()) {
         if (prefix[i] < node->data) {
             node = node->left;
         } else if (prefix[i] > node->data) {
             node = node->right;
         } else {
             i++;
-            if (i < prefix.length()) {
+            if (i < (int)prefix.length()) {
                 node = node->eq;
             }
         }
     }
     
-    return (i == prefix.length()) ? node : nullptr;
+    return (i == (int)prefix.length()) ? node : nullptr;
 }
 
-void TST::collectWords(std::shared_ptr<TSTNode> node, 
-        std::string prefix, 
-        std::vector<std::string>& results) {
+void TST::collectWords(std::shared_ptr<TSTNode> node,
+        std::string prefix,
+        std::vector<std::string>& results,
+        int limit) {
     if (node == nullptr) return;
-    
-    collectWords(node->left, prefix, results);
-    
+
+    // The walk is alphabetical, so once we hold `limit` results the remaining
+    // nodes can only produce words we would discard. Keeps this O(L + k).
+    auto reached = [&]() { return limit >= 0 && (int)results.size() >= limit; };
+
+    if (reached()) return;
+
+    collectWords(node->left, prefix, results, limit);
+    if (reached()) return;
+
     std::string current = prefix + node->data;
-    
+
     if (node->isEndOfString) {
         results.push_back(current);
+        if (reached()) return;
     }
-    
-    collectWords(node->eq, current, results);
-    collectWords(node->right, prefix, results);
+
+    collectWords(node->eq, current, results, limit);
+    if (reached()) return;
+
+    collectWords(node->right, prefix, results, limit);
 }
 
 std::vector<std::string> TST::prefixSearch(const std::string& prefix, int k) {
     std::vector<std::string> results;
     
+    if (k <= 0) return results;
+
     if (prefix.empty()) {
-        getAllWords(results);
-        if (results.size() > k) {
-            results.resize(k);
-        }
+        collectWords(root, "", results, k);
         return results;
     }
-    
+
     auto node = searchPrefix(prefix);
-    
+
     if (node == nullptr) {
         return results;
     }
-    
-    std::string base = prefix.substr(0, prefix.length() - 1);
-    
+
+    // The prefix may itself be a word; it sorts first and counts toward k.
     if (node->isEndOfString) {
         results.push_back(prefix);
     }
-    
-    collectWords(node->eq, prefix, results);
-    
-    if (results.size() > k) {
-        results.resize(k);
-    }
-    
+
+    collectWords(node->eq, prefix, results, k);
+
     return results;
 }
 
@@ -106,23 +111,23 @@ bool TST::search(const std::string& word) {
     auto node = root;
     int i = 0;
     
-    while (node != nullptr && i < word.length()) {
+    while (node != nullptr && i < (int)word.length()) {
         if (word[i] < node->data) {
             node = node->left;
         } else if (word[i] > node->data) {
             node = node->right;
         } else {
             i++;
-            if (i < word.length()) {
+            if (i < (int)word.length()) {
                 node = node->eq;
             }
         }
     }
     
-    return (node != nullptr && i == word.length() && node->isEndOfString);
+    return (node != nullptr && i == (int)word.length() && node->isEndOfString);
 }
 
 void TST::getAllWords(std::vector<std::string>& results) {
-    collectWords(root, "", results);
+    collectWords(root, "", results, -1);   // -1 = unbounded
 }
 

@@ -85,9 +85,10 @@ This results in fast, memory-efficient, and intelligent autocomplete suggestions
 - Autocomplete suggestions based on prefix  
 - Suggestions ranked by frequency  
 - Snippet support (e.g., `fori` → `for (int i = 0; i < n; i++)`)  
- - Combined suggestion pipeline (phrases, prefix, and substring matches) — returns up to 10 suggestions.
- - Top-K ranking uses a MinHeap and frequency/co-occurrence signals; recent results are cached in an LRU for responsiveness.
- - Editor behavior: files saved to `scratch/` by default (created automatically) and Undo/Redo is supported (Ctrl+Z / Ctrl+Y).
+ - Combined suggestion pipeline — learned phrases first, then TST prefix matches, then KMP substring matches as a fallback; returns up to 10 suggestions.
+ - Top-K ranking uses a MinHeap fed by the Ranker (frequency + co-occurrence boost); results are cached in an LRU keyed on the typed prefix.
+ - Undo/Redo (Ctrl+Z / Ctrl+Y) over whole-document snapshots, so edits that change the line count are reversible.
+ - Frequency counts persist to disk on a background writer thread, keeping file I/O off the keystroke path.
 - Practical demonstration of Trie + Hash Map + Heap working together
 
 ## Tech Stack Used
@@ -177,11 +178,57 @@ It is not required to run the ncurses-based editor and is excluded from the defa
 ---
 ## Running Tests
 
-To verify components:
+```bash
+make test
+```
 
-- g++ tests/heap_test.cpp -o heap_test && ./heap_test
-- g++ tests/lru_test.cpp -o lru_test && ./lru_test
-- g++ tests/tst_test.cpp -o tst_test && ./tst_test
+Builds and runs all four suites. Each test links only the modules it exercises —
+the implementations live in `src/`, so compiling a test file on its own will
+fail at link time.
+
+To run one suite by hand, link its implementation alongside it:
+
+```bash
+g++ -std=c++17 -Iinclude tests/heap_test.cpp src/minheap.cpp -o heap_test && ./heap_test
+g++ -std=c++17 -Iinclude tests/lru_test.cpp  src/lru.cpp     -o lru_test  && ./lru_test
+g++ -std=c++17 -Iinclude tests/tst_test.cpp  src/tst.cpp     -o tst_test  && ./tst_test
+```
+
+`tests/regression_test.cpp` pins down three defects found while profiling, so
+they cannot silently return:
+
+| Test | Guards against |
+| ---- | -------------- |
+| `prefixSearch` bound | Collecting every match under a prefix before truncating to k |
+| `FreqStore` concurrency | Lost updates and the recursive `shared_mutex` acquire in `bump()` |
+| `UndoRedoStack` round-trip | A redo that replays the state undo just restored |
+
+---
+## Performance
+
+Measured on the suggestion path, averaged over repeated lookups:
+
+| Operation | Cost |
+| --------- | ---- |
+| Suggestion latency (87-token dictionary) | ~23–56 µs |
+| `prefixSearch`, 40 000 matching words | 0.44 µs |
+| `prefixSearch`, 10 matching words | 0.46 µs |
+| LRU cache hit | 0.06 µs |
+| `bump()` (frequency update) | 0.04 µs |
+
+Two results worth calling out:
+
+**Prefix lookup no longer depends on how many words match.** `collectWords`
+originally walked the entire subtree under a prefix and the caller discarded all
+but `k`, so a common prefix cost O(total matches). Against a synthetic
+100 000-token dictionary that was 1 155 µs per lookup — slower than a linear
+scan. Bounding the traversal brought it to 1.8 µs, a 656× improvement.
+
+**Frequency persistence is off the keystroke path.** `bump()` used to rewrite the
+whole frequency file inline on every accepted suggestion. It now updates the map
+under an exclusive lock and signals a background writer, which coalesces any
+number of bumps into a single snapshot write. The snapshot is copied under a
+shared lock and written after releasing it, so disk I/O never blocks a reader.
 
 ---
 ## Applications
@@ -197,7 +244,7 @@ To verify components:
 
 | Name               | Roll Number | GitHub                                                                                                                       |
 | ------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Tanisha Ray        | B24CM1061   | [![GitHub](https://img.shields.io/badge/-@tanisharay-181717?logo=github&style=flat)](https://github.com/coderTanisha22)      |
+| Tanisha Ray        | B24CM1061   | [![GitHub](https://img.shields.io/badge/-@coderTanisha22-181717?logo=github&style=flat)](https://github.com/coderTanisha22)      |
 | Maahi Ratanpara    | B24CS1040   | [![GitHub](https://img.shields.io/badge/-@maahiratanpara-181717?logo=github&style=flat)](https://github.com/maahi271005)     |
 | Anika Sharma       | B24CM1009   | [![GitHub](https://img.shields.io/badge/-@anikasharma-181717?logo=github&style=flat)](https://github.com/Anika438)           |
 | Akshita Maheshwari | B24CM1006   | [![GitHub](https://img.shields.io/badge/-@akshitamaheshwari-181717?logo=github&style=flat)](https://github.com/AkshitaM1234) |

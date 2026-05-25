@@ -32,6 +32,33 @@ std::pair<int, std::string> UndoRedoStack::redo() {
     return action;
 }
 
+std::pair<int, std::string> UndoRedoStack::undo(const std::string& currentState) {
+    if (undoStack.empty()) {
+        throw std::runtime_error("Nothing to undo");
+    }
+
+    auto action = undoStack.top();
+    undoStack.pop();
+
+    // Park where we are now, so redo has somewhere to return to.
+    redoStack.push({action.first, currentState});
+
+    return action;
+}
+
+std::pair<int, std::string> UndoRedoStack::redo(const std::string& currentState) {
+    if (redoStack.empty()) {
+        throw std::runtime_error("Nothing to redo");
+    }
+
+    auto action = redoStack.top();
+    redoStack.pop();
+
+    undoStack.push({action.first, currentState});
+
+    return action;
+}
+
 void UndoRedoStack::clearRedo() {
     while (!redoStack.empty()) {
         redoStack.pop();

@@ -13,10 +13,10 @@ void MinHeap::heapifyDown(int index) {
     int smallest=index;
     int left=leftChild(index);
     int right=rightChild(index);
-    if(left<heap.size() && heap[left].first<heap[smallest].first){
+    if(left<(int)heap.size() && heap[left].first<heap[smallest].first){
         smallest=left;
     }
-    if(right<heap.size() && heap[right].first<heap[smallest].first){
+    if(right<(int)heap.size() && heap[right].first<heap[smallest].first){
         smallest=right;
     }
     if(smallest!=index){
@@ -25,7 +25,7 @@ void MinHeap::heapifyDown(int index) {
     }
 }
 void MinHeap::insert(double score,const string& word) {
-    if(heap.size()<maxSize){
+    if((int)heap.size()<maxSize){
         heap.push_back({score,word});
         heapifyUp(heap.size()-1);
     } 

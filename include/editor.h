@@ -27,6 +27,7 @@ class AutocompleteEngine;
  * - Ctrl+Space: Trigger autocomplete manually
  * - Esc: Close autocomplete popup
  */
+
 class TerminalEditor {
 private:
     std::vector<std::string> lines;

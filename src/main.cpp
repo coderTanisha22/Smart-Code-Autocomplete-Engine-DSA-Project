@@ -82,11 +82,14 @@ private:
 
 
 public:
+    // Initialiser order follows member declaration order - the compiler runs
+    // them in declaration order regardless, and ranker holds pointers to
+    // freqStore and graph, so the two must not drift apart.
     AutocompleteEngine()
         : cache(50),
         freqStore("data/frequency.txt"),
-        phraseStore("data/phrases.txt"),
         ranker(&freqStore, &graph),
+        phraseStore("data/phrases.txt"),
         useSubstringSearch(false),
         usePhraseCompletion(true){
 
@@ -337,21 +340,19 @@ int main() {
         }
 
         std::string acceptedToken;
-        bool isPhrase = false;
 
         if (isdigit(choice[0]) && choice.length() <= 2) {
             int num = std::stoi(choice);
             int totalSuggestions = phraseSuggestions.size() + suggestions.size();
 
             if (num >= 1 && num <= totalSuggestions) {
-                if (num <= phraseSuggestions.size()) {
+                if (num <= (int)phraseSuggestions.size()) {
                     // Selected a phrase
                     acceptedToken = phraseSuggestions[num - 1];
-                    isPhrase = true;
                     std::cout << "Accepted phrase: " << acceptedToken << std::endl;
                 } else {
                     // Selected a regular token
-                    int tokenIndex = num - phraseSuggestions.size() - 1;
+                    int tokenIndex = num - (int)phraseSuggestions.size() - 1;
                     acceptedToken = suggestions[tokenIndex].first;
                     engine.acceptSuggestion(acceptedToken);
 

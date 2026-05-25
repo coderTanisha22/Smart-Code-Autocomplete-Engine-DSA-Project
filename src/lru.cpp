@@ -7,6 +7,10 @@ lru_cache::lru_cache(int cap){
     tail = nullptr;
 }
 
+lru_cache::~lru_cache(){
+    clear();
+}
+
 void lru_cache::addNodeToFront(Node* node){
     if(node == nullptr) return;
     node->next = head;

@@ -11,6 +11,13 @@ void PhraseStore::addPhrase(const string& trigger, const string& fullText) {
         return;
     }
 
+    // A trigger carrying a delimiter would not read back.
+    if (trigger.find('|') != string::npos ||
+        trigger.find('\n') != string::npos ||
+        fullText.find('\n') != string::npos) {
+        return;
+    }
+
     // Don't store if snippet is too short (less than trigger + 3 chars)
     if (fullText.length() < trigger.length() + 3) {
         return;
@@ -49,7 +56,7 @@ vector<Phrase> PhraseStore::getPhrases(const string& trigger) {
 vector<Phrase> PhraseStore::getTopPhrases(const string& trigger, int n) {
     auto allPhrases = getPhrases(trigger);
 
-    if (allPhrases.size() <= n) {
+    if ((int)allPhrases.size() <= n) {
         return allPhrases;
     }
 
@@ -93,20 +100,35 @@ void PhraseStore::load() {
 
     string line;
     while (getline(file, line)) {
-        stringstream ss(line);
-        string trigger, snippet, countStr;
+        if (line.empty()) continue;
 
-        if (getline(ss, trigger, '|') &&
-            getline(ss, snippet, '|') &&
-            getline(ss, countStr, '|')) {
+        // Format is trigger|snippet|useCount, but snippets are code and
+        // contain '|' ("if(a||b)"). Splitting on every '|' left an empty
+        // count, and stoi("") threw and aborted the program on startup.
+        // Anchor on the first '|' and the last; the middle is the snippet.
+        size_t first = line.find('|');
+        size_t last  = line.rfind('|');
 
-            int count = stoi(countStr);
+        if (first == string::npos || last == first) continue;   // malformed
 
-            // Recreate the phrase with its use count
-            Phrase phrase(trigger, snippet);
-            phrase.useCount = count;
-            phrases[trigger].push_back(phrase);
+        string trigger  = line.substr(0, first);
+        string snippet  = line.substr(first + 1, last - first - 1);
+        string countStr = line.substr(last + 1);
+
+        if (trigger.empty() || snippet.empty()) continue;
+
+        // A corrupt count must not take the editor down.
+        int count = 1;
+        try {
+            count = stoi(countStr);
+        } catch (const exception&) {
+            continue;
         }
+        if (count < 1) count = 1;
+
+        Phrase phrase(trigger, snippet);
+        phrase.useCount = count;
+        phrases[trigger].push_back(phrase);
     }
 
     file.close();
