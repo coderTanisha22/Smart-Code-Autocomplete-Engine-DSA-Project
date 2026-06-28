@@ -3,11 +3,13 @@
 
 #include <string>
 #include <unordered_map>
+#include <shared_mutex>
 
 class FreqStore {
 private:
     std::unordered_map<std::string, int> frequencies;
     std::string filePath;
+    mutable std::shared_mutex mtx;
 
 public:
     FreqStore(const std::string& path);

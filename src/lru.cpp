@@ -51,6 +51,7 @@ void lru_cache::removeLRUNode(){
 }
 
 vector<string> lru_cache::get(const string& key){
+    std::unique_lock lock(mtx);
     if(cacheMap.find(key) == cacheMap.end()) return {};
     Node* node = cacheMap[key];
     moveNodeToFront(node);
@@ -58,6 +59,7 @@ vector<string> lru_cache::get(const string& key){
 }
 
 void lru_cache::put(const string& key, const vector<string>& val){
+    std::unique_lock lock(mtx);
     if(cacheMap.find(key) != cacheMap.end()){
         Node* node = cacheMap[key];
         node->val = val;
@@ -73,10 +75,12 @@ void lru_cache::put(const string& key, const vector<string>& val){
 }
 
 bool lru_cache::exists(const string& key) {
+    std::shared_lock lock(mtx);
     return cacheMap.find(key) != cacheMap.end();
 }
 
 void lru_cache::clear() {
+    std::unique_lock lock(mtx);
     Node* curr = head;
     while (curr != nullptr) {
         Node* next = curr->next;
