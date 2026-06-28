@@ -4,6 +4,10 @@
 #include<string>
 #include<vector>
 #include<unordered_map>
+#include <shared_mutex>
+
+
+
 using namespace std;
 
 struct Node{
@@ -26,6 +30,7 @@ private:
     unordered_map<string, Node*>cacheMap;
     Node* head;
     Node* tail;
+    mutable std::shared_mutex mtx;
 
     void addNodeToFront(Node* node);
     void removeNode(Node* node);
