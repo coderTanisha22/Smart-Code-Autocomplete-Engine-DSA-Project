@@ -28,6 +28,7 @@ void FreqStore::load() {
 }
 
 void FreqStore::save() {
+    std::shared_lock lock(mtx);
     std::ofstream file(filePath);
     
     if (!file.is_open()) {
@@ -42,11 +43,13 @@ void FreqStore::save() {
 }
 
 int FreqStore::get(const std::string& token) {
+    std::shared_lock lock(mtx);
     auto it = frequencies.find(token);
     return (it != frequencies.end()) ? it->second : 0;
 }
 
 void FreqStore::bump(const std::string& token, int amount) {
+    std::shared_lock lock(mtx);
     frequencies[token] += amount;
     save();
 }
