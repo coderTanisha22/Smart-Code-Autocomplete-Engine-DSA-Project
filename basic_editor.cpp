@@ -36,6 +36,8 @@
 #include "lru.h"
 #include "stack.h"
 
+#include <chrono>
+
 class BasicEditor {
 private:
     std::vector<std::string> lines;
@@ -301,6 +303,7 @@ private:
     }
 
     void triggerAutocomplete() {
+        auto t0 = std::chrono::high_resolution_clock::now();
         std::string word = getCurrentWord();
         if (word.empty()) {
             showingSuggestions = false;
@@ -335,6 +338,9 @@ private:
         suggestionCache.put(word, suggestions);
         showingSuggestions = true;
         selectedSuggestion = 0;
+        auto t1 = std::chrono::high_resolution_clock::now();
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+        mvprintw(LINES - 1, 0, "autocomplete: %ld us", us);
     }
 
     void acceptSuggestion() {
