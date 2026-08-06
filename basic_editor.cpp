@@ -70,6 +70,16 @@ private:
     bool fileModified = false;
 
     std::string searchQuery;
+    std::string statusMessage;
+    long lastLatencyUs = 0;
+
+    // Wider than the 10 we display: the trie cuts alphabetically, so a
+    // frequent match sitting 11th would never reach the heap.
+    static constexpr int CANDIDATE_LIMIT = 50;
+    static constexpr int MAX_SUGGESTIONS = 10;
+
+    // Learned phrases outrank raw frequency; useCount breaks ties.
+    static constexpr double PHRASE_BASE_SCORE = 100.0;
 
 public:
     BasicEditor()
@@ -233,6 +243,13 @@ private:
             cursorY + 1, lines.size(), cursorX + 1);
         attroff(A_REVERSE);
 
+        move(LINES - 1, 0);
+        clrtoeol();
+        if (!statusMessage.empty())
+            mvprintw(LINES - 1, 0, "%s", statusMessage.c_str());
+        else if (lastLatencyUs > 0)
+            mvprintw(LINES - 1, 0, "autocomplete: %ld us", lastLatencyUs);
+
         move(cursorY - scrollY, cursorX + 6);
         refresh();
     }
@@ -245,8 +262,21 @@ private:
     }
 
     bool handleInput(int ch) {
+        statusMessage.clear();
         switch (ch) {
             case 17: return false; // Ctrl+Q
+            case 19:               // Ctrl+S
+                saveFile();
+                break;
+            case 26:               // Ctrl+Z
+                performUndo();
+                break;
+            case 25:               // Ctrl+Y
+                performRedo();
+                break;
+            case 27:               // Esc-dismiss the popup
+                showingSuggestions = false;
+                break;
             case KEY_UP:
                 if (showingSuggestions && selectedSuggestion > 0) {
                     selectedSuggestion--;
@@ -272,7 +302,8 @@ private:
                 if (cursorX < (int)lines[cursorY].size()) cursorX++;
                 break;
             case '\n':
-                undoRedoStack.pushInsert(cursorY, lines[cursorY]);
+                snapshotDocument();
+                showingSuggestions = false;
                 lines.insert(lines.begin() + cursorY + 1,
                             lines[cursorY].substr(cursorX));
                 lines[cursorY] = lines[cursorY].substr(0, cursorX);
@@ -283,12 +314,20 @@ private:
                 break;
             case KEY_BACKSPACE:
             case 127:
-                undoRedoStack.pushInsert(cursorY, lines[cursorY]);
+                snapshotDocument();
                 if (cursorX > 0) {
                     lines[cursorY].erase(cursorX - 1, 1);
                     cursorX--;
+                } else if (cursorY > 0) {
+                    // Join with the previous line.
+                    cursorX = (int)lines[cursorY - 1].size();
+                    lines[cursorY - 1] += lines[cursorY];
+                    lines.erase(lines.begin() + cursorY);
+                    cursorY--;
+                    updateScroll();
                 }
                 fileModified = true;
+                triggerAutocomplete();
                 break;
 
             // ──────────────────────────────────────────────
@@ -328,7 +367,7 @@ private:
                 break;
             default:
                 if (ch >= 32 && ch <= 126) {
-                    undoRedoStack.pushInsert(cursorY, lines[cursorY]);
+                    snapshotDocument();
                     lines[cursorY].insert(cursorX++, 1, ch);
                     fileModified = true;
                     triggerAutocomplete();
@@ -364,9 +403,12 @@ private:
         // 1. Check LRU cache first (avoids redundant lookups)
         if (suggestionCache.exists(word)) {
             suggestions = suggestionCache.get(word);
-            showingSuggestions = true;
-            selectedSuggestion = 0;
-            return;
+            if (!suggestions.empty()) {
+                showingSuggestions = true;
+                selectedSuggestion = 0;
+                recordLatency(t0);
+                return;
+            }
         }
 
         // 2. Collect phrase matches (snippets like fori → for loop)
@@ -414,22 +456,33 @@ private:
         suggestionCache.put(word, suggestions);
         showingSuggestions = true;
         selectedSuggestion = 0;
+        recordLatency(t0);
+    }
+
+    void recordLatency(std::chrono::high_resolution_clock::time_point t0) {
         auto t1 = std::chrono::high_resolution_clock::now();
-        auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-        mvprintw(LINES - 1, 0, "autocomplete: %ld us", us);
+        lastLatencyUs =
+            std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
     }
 
     void acceptSuggestion() {
+        if (!showingSuggestions || suggestions.empty()) return;
+        if (selectedSuggestion < 0 ||
+            selectedSuggestion >= (int)suggestions.size()) return;
+
+        snapshotDocument();
+
         std::string word = getCurrentWord();
         std::string s = suggestions[selectedSuggestion];
 
-        if (s.rfind("[PHRASE]", 0) == 0)
+        if (s.rfind("[PHRASE] ", 0) == 0)
             s = s.substr(9);
 
-        int start = cursorX - word.size();
+        int start = cursorX - (int)word.size();
+        if (start < 0) start = 0;
         lines[cursorY].erase(start, word.size());
         lines[cursorY].insert(start, s);
-        cursorX = start + s.size();
+        cursorX = start + (int)s.size();
 
         freqStore.bump(s, 1);
         if (!lastAcceptedWord.empty())
@@ -440,7 +493,104 @@ private:
         ranker.setLastToken(s);
         lastAcceptedWord = s;
 
+        // Frequency and graph edges just changed, so cached lists are stale.
+        // Accepts are rare next to keystrokes, so clearing all is fine.
+        suggestionCache.clear();
+
+        fileModified = true;
         showingSuggestions = false;
+    }
+
+    // Unnamed buffers default into scratch/, which the constructor creates.
+    void saveFile() {
+        if (currentFileName.empty()) {
+            echo();
+            move(LINES - 1, 0);
+            clrtoeol();
+            mvprintw(LINES - 1, 0, "Save as: ");
+            char buf[256] = {0};
+            getnstr(buf, 255);
+            noecho();
+
+            if (buf[0] == '\0') {
+                statusMessage = "Save cancelled";
+                return;
+            }
+            currentFileName = buf;
+            if (currentFileName.find('/') == std::string::npos)
+                currentFileName = "scratch/" + currentFileName;
+        }
+
+        std::ofstream out(currentFileName);
+        if (!out) {
+            statusMessage = "Could not write " + currentFileName;
+            return;
+        }
+        for (const auto& line : lines)
+            out << line << "\n";
+
+        fileModified = false;
+        statusMessage = "Saved " + currentFileName;
+    }
+
+    // Undo/redo snapshots the whole document: Enter and a line-joining
+    // Backspace change the line count, which a per-line snapshot cannot undo.
+    std::string serializeDocument() const {
+        std::string out;
+        for (size_t i = 0; i < lines.size(); i++) {
+            if (i) out += '\n';
+            out += lines[i];
+        }
+        return out;
+    }
+
+    void restoreDocument(const std::string& snap) {
+        lines.clear();
+        std::string cur;
+        for (char c : snap) {
+            if (c == '\n') { lines.push_back(cur); cur.clear(); }
+            else cur += c;
+        }
+        lines.push_back(cur);
+        if (lines.empty()) lines.push_back("");
+
+        if (cursorY >= (int)lines.size()) cursorY = (int)lines.size() - 1;
+        if (cursorY < 0) cursorY = 0;
+        if (cursorX > (int)lines[cursorY].size()) cursorX = (int)lines[cursorY].size();
+    }
+
+    void snapshotDocument() {
+        undoRedoStack.pushInsert(cursorY, serializeDocument());
+    }
+
+    void performUndo() {
+        if (!undoRedoStack.canUndo()) {
+            statusMessage = "Nothing to undo";
+            return;
+        }
+        auto [y, snap] = undoRedoStack.undo(serializeDocument());
+        restoreDocument(snap);
+        cursorY = std::min(std::max(y, 0), (int)lines.size() - 1);
+        cursorX = std::min(cursorX, (int)lines[cursorY].size());
+        showingSuggestions = false;
+        fileModified = true;
+        statusMessage = "Undo";
+        updateScroll();
+    }
+
+    void performRedo() {
+        if (!undoRedoStack.canRedo()) {
+            statusMessage = "Nothing to redo";
+            return;
+        }
+        auto [y, snap] = undoRedoStack.redo(serializeDocument());
+        restoreDocument(snap);
+        cursorY = std::min(std::max(y, 0), (int)lines.size() - 1);
+        cursorX = std::min(cursorX, (int)lines[cursorY].size());
+        showingSuggestions = false;
+        fileModified = true;
+        statusMessage = "Redo";
+        updateScroll();
     }
 
     std::string getCurrentWord() {

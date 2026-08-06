@@ -5,6 +5,7 @@
 #include<vector>
 #include<unordered_map>
 #include <shared_mutex>
+#include <mutex>
 
 
 
@@ -38,7 +39,14 @@ private:
     void removeLRUNode();
 
 public:
-    lru_cache(int cap);
+    explicit lru_cache(int cap);
+
+    // Nodes are raw `new`ed in put(), so this owns heap memory: without the
+    // destructor they leak, and a default copy would double-free them.
+    ~lru_cache();
+    lru_cache(const lru_cache&) = delete;
+    lru_cache& operator=(const lru_cache&) = delete;
+
     vector<string>get(const string& key);
     void put(const string& key, const vector<string>& val);
     bool exists(const string& key);

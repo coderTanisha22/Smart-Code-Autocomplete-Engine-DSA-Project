@@ -35,7 +35,7 @@ private:
         return heap.empty(); 
     }
     bool isFull() const{
-        return heap.size()>=maxSize;
+        return (int)heap.size()>=maxSize;
     }
     std::vector<std::pair<double,std::string>> getAll();
     void clear();
