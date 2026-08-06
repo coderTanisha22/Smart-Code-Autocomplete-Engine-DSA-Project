@@ -6,15 +6,15 @@
  * - syntax highlighting
  * - file open / save
  * - search and navigation
- * - undo / redo
+ * - undo / redo  (Ctrl+Z / Ctrl+Y)
  * - intelligent autocomplete using classic DSA
  *
  * Autocomplete engine uses:
  * - TST for prefix matching
- * - MinHeap for ranking
+ * - Ranker for scoring (frequency + co-occurrence graph boost)
+ * - MinHeap (inside Ranker) for top-K selection
  * - LRU cache for reuse
- * - KMP for substring matches
- * - Graph + frequency for contextual learning
+ * - KMP for substring match fallback
  */
 
 #include <ncurses.h>
@@ -42,7 +42,6 @@ class BasicEditor {
 private:
     std::vector<std::string> lines;
     std::vector<std::string> suggestions;
-    std::vector<bool> isPhraseFlag;
 
     int cursorY = 0;
     int cursorX = 0;
@@ -60,7 +59,10 @@ private:
     std::vector<std::string> dictionaryWords;
     std::string lastAcceptedWord;
 
-    MinHeap suggestionHeap{10};
+    // [CHANGE 1] Removed MinHeap suggestionHeap member.
+    // The Ranker creates its own MinHeap internally in rankResults(),
+    // so a separate heap here was redundant.
+
     lru_cache suggestionCache{100};
     UndoRedoStack undoRedoStack;
 
@@ -232,9 +234,10 @@ private:
                     suggestions[i].c_str());
         }
 
+        // [CHANGE 5] Updated status bar to show Ctrl+Z / Ctrl+Y
         attron(A_REVERSE);
         mvprintw(LINES - 2, 0,
-            " %s%s | Line %d/%zu Col %d | Tab Complete | Ctrl+S Save | Ctrl+Z Undo | Ctrl+Y Redo | Ctrl+Q Quit ",
+            " %s%s | Ln %d/%zu Col %d | ^O Open ^W Save ^R Search ^Z Undo ^Y Redo ^Q Quit ",
             currentFileName.empty() ? "[No Name]" : currentFileName.c_str(),
             fileModified ? " [+]" : "",
             cursorY + 1, lines.size(), cursorX + 1);
@@ -326,6 +329,38 @@ private:
                 fileModified = true;
                 triggerAutocomplete();
                 break;
+
+            // ──────────────────────────────────────────────
+            // [CHANGE 4] Undo / Redo keybindings
+            // ──────────────────────────────────────────────
+            case 26: { // Ctrl+Z — Undo
+                if (undoRedoStack.canUndo()) {
+                    auto [lineNum, oldText] = undoRedoStack.undo();
+                    if (lineNum >= 0 && lineNum < (int)lines.size()) {
+                        lines[lineNum] = oldText;
+                        cursorY = lineNum;
+                        cursorX = std::min(cursorX, (int)oldText.size());
+                        fileModified = true;
+                        updateScroll();
+                    }
+                }
+                break;
+            }
+            case 25: { // Ctrl+Y — Redo
+                if (undoRedoStack.canRedo()) {
+                    auto [lineNum, newText] = undoRedoStack.redo();
+                    if (lineNum >= 0 && lineNum < (int)lines.size()) {
+                        lines[lineNum] = newText;
+                        cursorY = lineNum;
+                        cursorX = std::min(cursorX, (int)newText.size());
+                        fileModified = true;
+                        updateScroll();
+                    }
+                }
+                break;
+            }
+            // ──────────────────────────────────────────────
+
             case '\t':
                 if (showingSuggestions) acceptSuggestion();
                 else triggerAutocomplete();
@@ -341,6 +376,20 @@ private:
         return true;
     }
 
+    // ──────────────────────────────────────────────────────────────
+    // [CHANGE 2] Rewritten triggerAutocomplete()
+    //
+    // Before:  manual freqStore.get() → heap.insert() → sort
+    //          (Ranker, Graph, KMP all unused)
+    //
+    // Now:     PhraseStore (top phrases)
+    //        + TST prefix search
+    //        + KMP substring fallback (when prefix matches < 5)
+    //        + Ranker.rankResults() which internally uses:
+    //            - FreqStore.get()  for frequency score
+    //            - Graph.getBoost() for co-occurrence boost
+    //            - MinHeap          for top-K selection
+    // ──────────────────────────────────────────────────────────────
     void triggerAutocomplete() {
         auto t0 = std::chrono::high_resolution_clock::now();
         std::string word = getCurrentWord();
@@ -351,6 +400,7 @@ private:
 
         suggestions.clear();
 
+        // 1. Check LRU cache first (avoids redundant lookups)
         if (suggestionCache.exists(word)) {
             suggestions = suggestionCache.get(word);
             if (!suggestions.empty()) {
@@ -361,47 +411,50 @@ private:
             }
         }
 
-        suggestionHeap.clear();
-        std::unordered_set<std::string> seen;
+        // 2. Collect phrase matches (snippets like fori → for loop)
+        auto phrases = phraseStore.getTopPhrases(word, 3);
 
-        // The graph boost is relative to the last accepted token.
-        ranker.setLastToken(lastAcceptedWord);
+        // 3. Collect prefix matches from TST
+        auto candidates = tst.prefixSearch(word, 10);
 
-        // 1) Learned phrases for this trigger.
-        for (const auto& p : phraseStore.getTopPhrases(word, 3)) {
-            if (!seen.insert(p.snippet).second) continue;
-            suggestionHeap.insert(PHRASE_BASE_SCORE + p.useCount,
-                                  "[PHRASE] " + p.snippet);
-        }
-
-        // 2) Prefix matches, scored by the Ranker (frequency + graph boost).
-        for (const auto& t : tst.prefixSearch(word, CANDIDATE_LIMIT)) {
-            if (!seen.insert(t).second) continue;
-            suggestionHeap.insert(ranker.computeScore(t), t);
-        }
-
-        // 3) KMP substring fallback ("rint" -> "printf"). Linear scan, so it
-        //    only runs when prefix matching came up short.
-        if (suggestionHeap.size() < MAX_SUGGESTIONS) {
-            for (const auto& w : dictionaryWords) {
-                if (suggestionHeap.size() >= MAX_SUGGESTIONS) break;
-                if (w.rfind(word, 0) == 0) continue;      // already a prefix hit
-                if (seen.count(w)) continue;
-                if (KMP::contains(w, word)) {
-                    seen.insert(w);
-                    suggestionHeap.insert(ranker.computeScore(w), w);
+        // 4. KMP substring fallback: if prefix matches are sparse,
+        //    search the full dictionary for words CONTAINING the typed text.
+        //    This is where KMP earns its place — O(n+m) per word instead
+        //    of naive O(n*m), and it avoids duplicating prefix results.
+        if ((int)candidates.size() < 5) {
+            for (const auto& dictWord : dictionaryWords) {
+                if (KMP::contains(dictWord, word)) {
+                    // Avoid duplicates already found by prefix search
+                    if (std::find(candidates.begin(), candidates.end(), dictWord)
+                            == candidates.end()) {
+                        candidates.push_back(dictWord);
+                        if (candidates.size() >= 15) break;
+                    }
                 }
             }
         }
 
-        // getAll() already returns highest-score-first.
-        for (const auto& [score, s] : suggestionHeap.getAll())
-            suggestions.push_back(s);
+        // 5. Score and rank via Ranker
+        //    Ranker.computeScore() = freqStore.get(token) + graph.getBoost(last, token)
+        //    This is where the Graph's co-occurrence data is finally READ,
+        //    not just written. The lastAcceptedWord context influences ranking.
+        ranker.setLastToken(lastAcceptedWord);
+        auto ranked = ranker.rankResults(candidates, 10);
 
-        if (!suggestions.empty())
-            suggestionCache.put(word, suggestions);
+        // 6. Assemble final suggestions: phrases first, then ranked tokens
+        for (auto& p : phrases)
+            suggestions.push_back("[PHRASE] " + p.snippet);
 
-        showingSuggestions = !suggestions.empty();
+        for (auto& [token, score] : ranked)
+            suggestions.push_back(token);
+
+        // Cap at 10 total suggestions
+        if (suggestions.size() > 10)
+            suggestions.resize(10);
+
+        // 7. Cache result in LRU for next time
+        suggestionCache.put(word, suggestions);
+        showingSuggestions = true;
         selectedSuggestion = 0;
         recordLatency(t0);
     }
@@ -434,6 +487,10 @@ private:
         freqStore.bump(s, 1);
         if (!lastAcceptedWord.empty())
             graph.addEdge(lastAcceptedWord, s);
+
+        // [CHANGE 3] Keep Ranker in sync with accepted word
+        // so the NEXT autocomplete uses co-occurrence context.
+        ranker.setLastToken(s);
         lastAcceptedWord = s;
 
         // Frequency and graph edges just changed, so cached lists are stale.
